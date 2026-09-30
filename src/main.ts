@@ -6,21 +6,26 @@ const app = document.querySelector<HTMLDivElement>('#app')!
 app.innerHTML = `
   <h1>PligtPointApp</h1>
 
-  <form id="login-form">
-    <div>
-      <label for="email">Email</label><br>
-      <input id="email" type="email" required>
-    </div>
+  <section id="login-section">
+    <form id="login-form">
+      <div>
+        <label for="email">Email</label><br>
+        <input id="email" type="email" required>
+      </div>
 
-    <div>
-      <label for="password">Password</label><br>
-      <input id="password" type="password" required>
-    </div>
+      <div>
+        <label for="password">Password</label><br>
+        <input id="password" type="password" required>
+      </div>
 
-    <button type="submit">Sign in</button>
-  </form>
+      <button type="submit">Sign in</button>
+    </form>
+  </section>
 
-  <p id="status">Not signed in</p>
+  <section id="account-section" hidden>
+    <p id="status"></p>
+    <button id="logout-button">Sign out</button>
+  </section>
 
   <section id="leaderboard-section" hidden>
     <h2>Leaderboard</h2>
@@ -45,11 +50,20 @@ app.innerHTML = `
   </section>
 `
 
+const loginSection =
+  document.querySelector<HTMLElement>('#login-section')!
+
 const form =
   document.querySelector<HTMLFormElement>('#login-form')!
 
+const accountSection =
+  document.querySelector<HTMLElement>('#account-section')!
+
 const status =
   document.querySelector<HTMLParagraphElement>('#status')!
+
+const logoutButton =
+  document.querySelector<HTMLButtonElement>('#logout-button')!
 
 const leaderboardSection =
   document.querySelector<HTMLElement>('#leaderboard-section')!
@@ -260,16 +274,54 @@ async function loadLeaderboard() {
 }
 
 
+async function showSignedInApp(email: string) {
+  loginSection.hidden = true
+
+  accountSection.hidden = false
+  leaderboardSection.hidden = false
+  choresSection.hidden = false
+  historySection.hidden = false
+
+  status.textContent = `Signed in as ${email}`
+
+  await loadChores()
+  await loadHistory()
+  await loadLeaderboard()
+}
+
+
+function showSignedOutApp() {
+  loginSection.hidden = false
+
+  accountSection.hidden = true
+  leaderboardSection.hidden = true
+  choresSection.hidden = true
+  historySection.hidden = true
+
+  choresList.innerHTML = ''
+  history.innerHTML = ''
+  leaderboard.innerHTML = ''
+
+  householdTotal.textContent = '0'
+}
+
+
 form.addEventListener('submit', async (event) => {
   event.preventDefault()
 
   const email =
     document.querySelector<HTMLInputElement>('#email')!.value
 
-  const password =
-    document.querySelector<HTMLInputElement>('#password')!.value
+  const passwordInput =
+    document.querySelector<HTMLInputElement>('#password')!
 
-  status.textContent = 'Signing in...'
+  const password = passwordInput.value
+
+  const submitButton =
+    form.querySelector<HTMLButtonElement>('button')!
+
+  submitButton.disabled = true
+  submitButton.textContent = 'Signing in...'
 
   const { data, error } =
     await supabase.auth.signInWithPassword({
@@ -277,20 +329,59 @@ form.addEventListener('submit', async (event) => {
       password,
     })
 
+  submitButton.disabled = false
+  submitButton.textContent = 'Sign in'
+
   if (error) {
-    status.textContent =
-      `Login failed: ${error.message}`
+    alert(`Login failed: ${error.message}`)
     return
   }
 
-  status.textContent =
-    `Signed in as ${data.user.email}`
+  passwordInput.value = ''
 
-  leaderboardSection.hidden = false
-  choresSection.hidden = false
-  historySection.hidden = false
-
-  await loadChores()
-  await loadHistory()
-  await loadLeaderboard()
+  await showSignedInApp(
+    data.user.email ?? 'household member'
+  )
 })
+
+
+logoutButton.addEventListener('click', async () => {
+  logoutButton.disabled = true
+
+  const { error } = await supabase.auth.signOut()
+
+  logoutButton.disabled = false
+
+  if (error) {
+    status.textContent =
+      `Could not sign out: ${error.message}`
+    return
+  }
+
+  showSignedOutApp()
+})
+
+
+async function initializeApp() {
+  const {
+    data: { session },
+    error,
+  } = await supabase.auth.getSession()
+
+  if (error) {
+    console.error('Could not read session:', error)
+    showSignedOutApp()
+    return
+  }
+
+  if (session) {
+    await showSignedInApp(
+      session.user.email ?? 'household member'
+    )
+  } else {
+    showSignedOutApp()
+  }
+}
+
+
+initializeApp()
