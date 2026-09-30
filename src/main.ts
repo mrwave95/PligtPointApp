@@ -22,12 +22,27 @@ app.innerHTML = `
 
   <p id="status">Not signed in</p>
 
-  <button id="complete-button" hidden>
-    Complete test chore
-  </button>
+  <section id="leaderboard-section" hidden>
+    <h2>Leaderboard</h2>
 
-  <h2>Recent activity</h2>
-  <ul id="history"></ul>
+    <p>
+      Household total:
+      <strong id="household-total">0</strong>
+      points
+    </p>
+
+    <ol id="leaderboard"></ol>
+  </section>
+
+  <section id="chores-section" hidden>
+    <h2>Available chores</h2>
+    <div id="chores-list"></div>
+  </section>
+
+  <section id="history-section" hidden>
+    <h2>Recent activity</h2>
+    <ul id="history"></ul>
+  </section>
 `
 
 const form =
@@ -36,11 +51,91 @@ const form =
 const status =
   document.querySelector<HTMLParagraphElement>('#status')!
 
-const completeButton =
-  document.querySelector<HTMLButtonElement>('#complete-button')!
+const leaderboardSection =
+  document.querySelector<HTMLElement>('#leaderboard-section')!
+
+const householdTotal =
+  document.querySelector<HTMLElement>('#household-total')!
+
+const leaderboard =
+  document.querySelector<HTMLOListElement>('#leaderboard')!
+
+const choresSection =
+  document.querySelector<HTMLElement>('#chores-section')!
+
+const choresList =
+  document.querySelector<HTMLDivElement>('#chores-list')!
+
+const historySection =
+  document.querySelector<HTMLElement>('#history-section')!
 
 const history =
   document.querySelector<HTMLUListElement>('#history')!
+
+
+async function loadChores() {
+  const { data: chores, error } = await supabase
+    .from('chores')
+    .select('id, name, estimated_minutes, points')
+    .eq('active', true)
+    .order('name')
+
+  if (error) {
+    status.textContent =
+      `Could not load chores: ${error.message}`
+    return
+  }
+
+  choresList.innerHTML = ''
+
+  for (const chore of chores) {
+    const container = document.createElement('div')
+
+    const title = document.createElement('strong')
+    title.textContent = chore.name
+
+    const details = document.createElement('p')
+    details.textContent =
+      `${chore.estimated_minutes ?? '?'} min — ${chore.points} points`
+
+    const button = document.createElement('button')
+    button.textContent = 'Complete'
+
+    button.addEventListener('click', async () => {
+      button.disabled = true
+      status.textContent = `Completing ${chore.name}...`
+
+      const { data, error } = await supabase.rpc(
+        'complete_chore',
+        {
+          p_chore_id: chore.id,
+        }
+      )
+
+      if (error) {
+        status.textContent =
+          `Completion failed: ${error.message}`
+
+        button.disabled = false
+        return
+      }
+
+      status.textContent =
+        `${chore.name} completed. Completion ID: ${data}`
+
+      button.disabled = false
+
+      await loadHistory()
+      await loadLeaderboard()
+    })
+
+    container.appendChild(title)
+    container.appendChild(details)
+    container.appendChild(button)
+
+    choresList.appendChild(container)
+  }
+}
 
 
 async function loadHistory() {
@@ -52,8 +147,9 @@ async function loadHistory() {
       .limit(20)
 
   if (completionsError) {
-    history.innerHTML =
-      `<li>Could not load history: ${completionsError.message}</li>`
+    history.innerHTML = ''
+    history.textContent =
+      `Could not load history: ${completionsError.message}`
     return
   }
 
@@ -63,8 +159,9 @@ async function loadHistory() {
       .select('id, name')
 
   if (choresError) {
-    history.innerHTML =
-      `<li>Could not load chores: ${choresError.message}</li>`
+    history.innerHTML = ''
+    history.textContent =
+      `Could not load chores: ${choresError.message}`
     return
   }
 
@@ -74,8 +171,9 @@ async function loadHistory() {
       .select('id, display_name')
 
   if (profilesError) {
-    history.innerHTML =
-      `<li>Could not load profiles: ${profilesError.message}</li>`
+    history.innerHTML = ''
+    history.textContent =
+      `Could not load profiles: ${profilesError.message}`
     return
   }
 
@@ -98,6 +196,66 @@ async function loadHistory() {
       `+${completion.points_awarded} points`
 
     history.appendChild(item)
+  }
+}
+
+
+async function loadLeaderboard() {
+  const { data: completions, error: completionsError } =
+    await supabase
+      .from('completions')
+      .select('user_id, points_awarded')
+
+  if (completionsError) {
+    status.textContent =
+      `Could not load leaderboard: ${completionsError.message}`
+    return
+  }
+
+  const { data: profiles, error: profilesError } =
+    await supabase
+      .from('profiles')
+      .select('id, display_name')
+
+  if (profilesError) {
+    status.textContent =
+      `Could not load profiles: ${profilesError.message}`
+    return
+  }
+
+  const scores = new Map<string, number>()
+  let total = 0
+
+  for (const completion of completions) {
+    total += completion.points_awarded
+
+    const currentScore =
+      scores.get(completion.user_id) ?? 0
+
+    scores.set(
+      completion.user_id,
+      currentScore + completion.points_awarded
+    )
+  }
+
+  householdTotal.textContent = String(total)
+
+  leaderboard.innerHTML = ''
+
+  const sortedScores =
+    [...scores.entries()]
+      .sort((a, b) => b[1] - a[1])
+
+  for (const [userId, score] of sortedScores) {
+    const profile =
+      profiles.find(profile => profile.id === userId)
+
+    const item = document.createElement('li')
+
+    item.textContent =
+      `${profile?.display_name ?? 'Unknown user'} — ${score} points`
+
+    leaderboard.appendChild(item)
   }
 }
 
@@ -125,46 +283,14 @@ form.addEventListener('submit', async (event) => {
     return
   }
 
-  const { data: chores, error: choresError } =
-    await supabase
-      .from('chores')
-      .select('*')
-
-  if (choresError) {
-    status.textContent =
-      `Signed in, but chore read failed: ${choresError.message}`
-    return
-  }
-
   status.textContent =
-    `Signed in as ${data.user.email} | ` +
-    `Found ${chores.length} chore(s)`
+    `Signed in as ${data.user.email}`
 
-  completeButton.hidden = false
+  leaderboardSection.hidden = false
+  choresSection.hidden = false
+  historySection.hidden = false
 
+  await loadChores()
   await loadHistory()
-})
-
-
-completeButton.addEventListener('click', async () => {
-  status.textContent = 'Completing chore...'
-
-  const { data, error } =
-    await supabase.rpc(
-      'complete_chore',
-      {
-        p_chore_id: 1,
-      }
-    )
-
-  if (error) {
-    status.textContent =
-      `Completion failed: ${error.message}`
-    return
-  }
-
-  status.textContent =
-    `Chore completed successfully. Completion ID: ${data}`
-
-  await loadHistory()
+  await loadLeaderboard()
 })
