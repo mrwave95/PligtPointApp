@@ -3,6 +3,8 @@ import { supabase } from './supabase'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 
+let currentUserId: string | null = null
+
 app.innerHTML = `
   <h1>PligtPointApp</h1>
 
@@ -37,6 +39,9 @@ app.innerHTML = `
     </p>
 
     <ol id="leaderboard"></ol>
+
+    <h3>Cash-in activity</h3>
+    <ul id="redemption-history"></ul>
   </section>
 
   <section id="chores-section" hidden>
@@ -47,6 +52,34 @@ app.innerHTML = `
   <section id="history-section" hidden>
     <h2>Recent activity</h2>
     <ul id="history"></ul>
+  </section>
+
+  <section id="profile-section" hidden>
+    <h2>User settings</h2>
+
+    <p>
+      Available points:
+      <strong id="available-points">0</strong>
+    </p>
+
+    <div>
+      <label for="profile-color">Your colour</label>
+      <input
+        id="profile-color"
+        type="color"
+        value="#8b5cf6"
+      >
+
+      <button id="save-color-button">
+        Save colour
+      </button>
+    </div>
+
+    <br>
+
+    <button id="cash-in-button">
+      Cash in all available points
+    </button>
   </section>
 `
 
@@ -74,6 +107,9 @@ const householdTotal =
 const leaderboard =
   document.querySelector<HTMLOListElement>('#leaderboard')!
 
+const redemptionHistory =
+  document.querySelector<HTMLUListElement>('#redemption-history')!
+
 const choresSection =
   document.querySelector<HTMLElement>('#chores-section')!
 
@@ -85,6 +121,21 @@ const historySection =
 
 const history =
   document.querySelector<HTMLUListElement>('#history')!
+
+const profileSection =
+  document.querySelector<HTMLElement>('#profile-section')!
+
+const availablePoints =
+  document.querySelector<HTMLElement>('#available-points')!
+
+const profileColor =
+  document.querySelector<HTMLInputElement>('#profile-color')!
+
+const saveColorButton =
+  document.querySelector<HTMLButtonElement>('#save-color-button')!
+
+const cashInButton =
+  document.querySelector<HTMLButtonElement>('#cash-in-button')!
 
 
 async function loadChores() {
@@ -141,6 +192,7 @@ async function loadChores() {
 
       await loadHistory()
       await loadLeaderboard()
+      await loadProfile()
     })
 
     container.appendChild(title)
@@ -161,7 +213,6 @@ async function loadHistory() {
       .limit(20)
 
   if (completionsError) {
-    history.innerHTML = ''
     history.textContent =
       `Could not load history: ${completionsError.message}`
     return
@@ -173,7 +224,6 @@ async function loadHistory() {
       .select('id, name')
 
   if (choresError) {
-    history.innerHTML = ''
     history.textContent =
       `Could not load chores: ${choresError.message}`
     return
@@ -185,7 +235,6 @@ async function loadHistory() {
       .select('id, display_name')
 
   if (profilesError) {
-    history.innerHTML = ''
     history.textContent =
       `Could not load profiles: ${profilesError.message}`
     return
@@ -229,7 +278,7 @@ async function loadLeaderboard() {
   const { data: profiles, error: profilesError } =
     await supabase
       .from('profiles')
-      .select('id, display_name')
+      .select('id, display_name, color')
 
   if (profilesError) {
     status.textContent =
@@ -266,43 +315,230 @@ async function loadLeaderboard() {
 
     const item = document.createElement('li')
 
-    item.textContent =
-      `${profile?.display_name ?? 'Unknown user'} — ${score} points`
+    const name = document.createElement('span')
+    name.textContent =
+      profile?.display_name ?? 'Unknown user'
+
+    if (profile?.color) {
+      name.style.color = profile.color
+    }
+
+    item.appendChild(name)
+    item.append(` — ${score} points`)
 
     leaderboard.appendChild(item)
+  }
+
+  await loadRedemptionHistory()
+}
+
+
+async function loadRedemptionHistory() {
+  const { data: redemptions, error: redemptionError } =
+    await supabase
+      .from('redemptions')
+      .select('user_id, points_redeemed, redeemed_at')
+      .order('redeemed_at', { ascending: false })
+      .limit(20)
+
+  if (redemptionError) {
+    redemptionHistory.textContent =
+      `Could not load cash-ins: ${redemptionError.message}`
+    return
+  }
+
+  const { data: profiles, error: profilesError } =
+    await supabase
+      .from('profiles')
+      .select('id, display_name')
+
+  if (profilesError) {
+    redemptionHistory.textContent =
+      `Could not load profiles: ${profilesError.message}`
+    return
+  }
+
+  redemptionHistory.innerHTML = ''
+
+  if (redemptions.length === 0) {
+    const item = document.createElement('li')
+    item.textContent = 'No points have been cashed in yet.'
+    redemptionHistory.appendChild(item)
+    return
+  }
+
+  for (const redemption of redemptions) {
+    const profile = profiles.find(
+      profile => profile.id === redemption.user_id
+    )
+
+    const item = document.createElement('li')
+
+    item.textContent =
+      `${profile?.display_name ?? 'Unknown user'} ` +
+      `cashed in ${redemption.points_redeemed} points`
+
+    redemptionHistory.appendChild(item)
   }
 }
 
 
-async function showSignedInApp(email: string) {
+async function loadProfile() {
+  if (!currentUserId) {
+    return
+  }
+
+  const { data: profile, error: profileError } =
+    await supabase
+      .from('profiles')
+      .select('display_name, color')
+      .eq('id', currentUserId)
+      .single()
+
+  if (profileError) {
+    status.textContent =
+      `Could not load profile: ${profileError.message}`
+    return
+  }
+
+  if (profile.color) {
+    profileColor.value = profile.color
+  }
+
+  const { data: completions, error: completionsError } =
+    await supabase
+      .from('completions')
+      .select('points_awarded')
+      .eq('user_id', currentUserId)
+
+  if (completionsError) {
+    status.textContent =
+      `Could not calculate points: ${completionsError.message}`
+    return
+  }
+
+  const { data: redemptions, error: redemptionsError } =
+    await supabase
+      .from('redemptions')
+      .select('points_redeemed')
+      .eq('user_id', currentUserId)
+
+  if (redemptionsError) {
+    status.textContent =
+      `Could not calculate redeemed points: ${redemptionsError.message}`
+    return
+  }
+
+  const earned =
+    completions.reduce(
+      (sum, completion) =>
+        sum + completion.points_awarded,
+      0
+    )
+
+  const redeemed =
+    redemptions.reduce(
+      (sum, redemption) =>
+        sum + redemption.points_redeemed,
+      0
+    )
+
+  const available = earned - redeemed
+
+  availablePoints.textContent = String(available)
+
+  cashInButton.disabled = available <= 0
+}
+
+
+saveColorButton.addEventListener('click', async () => {
+  saveColorButton.disabled = true
+
+  const { error } = await supabase.rpc(
+    'set_profile_color',
+    {
+      p_color: profileColor.value,
+    }
+  )
+
+  saveColorButton.disabled = false
+
+  if (error) {
+    status.textContent =
+      `Could not save colour: ${error.message}`
+    return
+  }
+
+  status.textContent = 'Profile colour saved.'
+
+  await loadLeaderboard()
+})
+
+
+cashInButton.addEventListener('click', async () => {
+  cashInButton.disabled = true
+  status.textContent = 'Cashing in points...'
+
+  const { data, error } =
+    await supabase.rpc('cash_in_points')
+
+  if (error) {
+    status.textContent =
+      `Could not cash in points: ${error.message}`
+
+    await loadProfile()
+    return
+  }
+
+  status.textContent =
+    `Successfully cashed in ${data} points.`
+
+  await loadProfile()
+  await loadLeaderboard()
+})
+
+
+async function showSignedInApp(
+  userId: string,
+  email: string
+) {
+  currentUserId = userId
+
   loginSection.hidden = true
 
   accountSection.hidden = false
   leaderboardSection.hidden = false
   choresSection.hidden = false
   historySection.hidden = false
+  profileSection.hidden = false
 
   status.textContent = `Signed in as ${email}`
 
   await loadChores()
   await loadHistory()
   await loadLeaderboard()
+  await loadProfile()
 }
 
 
 function showSignedOutApp() {
+  currentUserId = null
+
   loginSection.hidden = false
 
   accountSection.hidden = true
   leaderboardSection.hidden = true
   choresSection.hidden = true
   historySection.hidden = true
+  profileSection.hidden = true
 
   choresList.innerHTML = ''
   history.innerHTML = ''
   leaderboard.innerHTML = ''
+  redemptionHistory.innerHTML = ''
 
   householdTotal.textContent = '0'
+  availablePoints.textContent = '0'
 }
 
 
@@ -340,6 +576,7 @@ form.addEventListener('submit', async (event) => {
   passwordInput.value = ''
 
   await showSignedInApp(
+    data.user.id,
     data.user.email ?? 'household member'
   )
 })
@@ -376,6 +613,7 @@ async function initializeApp() {
 
   if (session) {
     await showSignedInApp(
+      session.user.id,
       session.user.email ?? 'household member'
     )
   } else {
