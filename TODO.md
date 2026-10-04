@@ -5,21 +5,20 @@ This file tracks deliberately deferred work.
 Items here are not necessarily bugs. They are features or improvements that were intentionally postponed while building and securing the core application.
 
 
-## Next: Multi-user testing
+## Multi-user testing — completed
 
-Create at least one second household account that is **not** an administrator.
-
-Verify:
+Verified:
 
 - normal login works
 - normal user does not see Administration
-- manually opening `/admin` does not grant access
-- admin RPCs reject the normal user
+- manually opening `/admin` returns Access Denied
+- admin RPCs reject non-admin users
 - both users appear correctly on the leaderboard
 - chore completions are attributed to the correct user
-- counter chores use household-wide completion progress
-- each user has their own available cash-in balance
+- counter chores use household-wide progress
+- each user has an independent available cash-in balance
 - one user's redemption does not affect another user's balance
+- cashing in does not reduce lifetime leaderboard points
 
 
 ## Realtime / live updates
