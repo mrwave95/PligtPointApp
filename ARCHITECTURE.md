@@ -2,143 +2,190 @@
 
 ## Overview
 
-PligtPointApp is a household chores PWA.
+PligtPointApp is a private household chores and points application.
 
-Frontend:
-- Vite
-- TypeScript
-- GitHub repository
-- Eventually deployed as a PWA
+The current application architecture is:
 
-Backend:
-- Supabase Cloud
-- PostgreSQL
-- Supabase Auth
-- Row Level Security
+- **Frontend:** Lovable
+- **Backend:** Supabase Cloud
+- **Database:** PostgreSQL
+- **Authentication:** Supabase Auth
+- **Authorization:** PostgreSQL privileges, Row Level Security, and secured RPC functions
+
+The original Vite/TypeScript frontend in this repository was used as an early integration and security prototype. The active frontend is now developed in Lovable and connects to the existing Supabase backend.
+
+The backend is the authoritative source of truth.
+
+The browser is treated as untrusted.
+
 
 ---
 
-## Authentication
+# Authentication
 
-Household members authenticate with Supabase Auth.
+Household members authenticate using Supabase Auth.
 
-Public signup is disabled.
+Current security choices:
 
-Anonymous sign-in is disabled.
+- Public signup is disabled
+- Anonymous sign-in is disabled
+- Email/password authentication is enabled
+- Household users are created manually
+- Password minimum length is 12
+- Secure email change is enabled
+- Secure password change is enabled
+- Current password is required for password changes
 
-The application uses:
+The frontend may contain:
 
 - Supabase project URL
 - Supabase publishable key
 
 The frontend must never contain:
 
-- Supabase secret/service-role keys
-- database password
-- admin credentials
+- Supabase service-role / secret key
+- Database password
+- Administrative credentials
+
 
 ---
 
-## Profiles
+# Profiles
 
-Supabase stores login accounts in:
+Authentication accounts live in:
 
-auth.users
+`auth.users`
 
-The application stores display information separately in:
+Application-facing profile information lives in:
 
-public.profiles
+`public.profiles`
 
-The two tables share the same user UUID.
+The shared identifier is:
 
-Example:
+`auth.users.id = public.profiles.id`
 
-auth.users.id
-    =
-public.profiles.id
+Important profile fields include:
 
-The frontend does not need direct access to auth.users.
+- `id`
+- `display_name`
+- `color`
+- `is_admin`
+- `created_at`
 
----
+Authenticated users may read profiles.
 
-## Chores
+Browser users do **not** receive direct UPDATE permission on `public.profiles`.
 
-Available chores are stored in:
+A user changes their own profile color through:
 
-public.chores
+`set_profile_color(p_color)`
 
-Important fields:
+The `is_admin` field is controlled by the database and cannot be modified directly by the browser.
 
-- id
-- name
-- estimated_minutes
-- points
-- active
-
-For the first version, chores are managed directly through Supabase rather than through the PWA.
 
 ---
 
-## Completions
+# Points Model
 
-Completed chores are stored in:
+PligtPointApp separates **lifetime earned points** from **available points**.
 
-public.completions
+## Lifetime leaderboard points
 
-Each completion records:
+Lifetime points are calculated from:
 
-- chore_id
-- user_id
-- points_awarded
-- completed_at
+`SUM(public.completions.points_awarded)`
 
-The leaderboard is calculated from completion records.
+Cashing in points does **not** reduce lifetime leaderboard score.
 
-It is not stored as a separate authoritative score.
+The leaderboard is derived from completion history rather than stored as a mutable score.
 
----
+## Available points
 
-## Completing a chore
+Available/spendable points are:
 
-The browser is NOT allowed to insert directly into public.completions.
+`earned points - redeemed points`
 
-Instead it calls:
+Redemptions are stored in:
 
-complete_chore(chore_id)
+`public.redemptions`
 
-The browser supplies only the chore ID.
+Users cash in points through:
 
-PostgreSQL determines:
+`cash_in_points(p_points)`
 
-- authenticated user via auth.uid()
-- current chore point value
-- completion timestamp
+The frontend sends only the requested amount.
 
-This prevents the client from choosing its own user ID or point value.
+The backend independently:
 
----
+1. identifies the authenticated user
+2. calculates lifetime points earned
+3. calculates points already redeemed
+4. calculates the real available balance
+5. rejects invalid or excessive redemption amounts
+6. records the redemption
 
-## Permissions
+The browser cannot insert directly into `public.redemptions`.
 
-Anonymous users:
-
-- cannot read profiles
-- cannot read chores
-- cannot read completions
-- cannot call complete_chore()
-
-Authenticated household users:
-
-- can read profiles
-- can read chores
-- can read completions
-- can call complete_chore()
-- cannot directly insert/update/delete completion records
 
 ---
 
-## Security principle
+# Chores
 
-The browser is treated as untrusted.
+Chores are stored in:
 
-The frontend may request an action, but Supabase/PostgreSQL decides whether that action is allowed and what trusted data is recorded.
+`public.chores`
+
+Important fields include:
+
+- `id`
+- `name`
+- `description`
+- `estimated_minutes`
+- `points`
+- `active`
+- `completion_limit`
+- `cooldown_days`
+- `available_from`
+- `created_at`
+- `updated_at`
+
+## Enabled versus available
+
+These are deliberately different concepts.
+
+### `active`
+
+`active` is the administrator enable/disable switch.
+
+If:
+
+`active = false`
+
+the chore is disabled regardless of recurrence state.
+
+### `available_from`
+
+`available_from` determines the beginning of the current or next chore cycle.
+
+A chore cannot be completed before this timestamp.
+
+
+---
+
+# Chore Behaviour Model
+
+PligtPointApp avoids calendar scheduling.
+
+Recurrence uses **elapsed time only**.
+
+One cooldown day means exactly:
+
+`24 elapsed hours`
+
+The combination of `completion_limit` and `cooldown_days` describes chore behaviour.
+
+## One-off
+
+```text
+completion_limit = 1
+cooldown_days = NULL
